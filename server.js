@@ -87,6 +87,7 @@ async function createPdf(page, url, viewport) {
   await scrollPageForLazyLoad(page);
   await page.waitForTimeout(200);
   await normalizeForFullPageCapture(page);
+  await hideStickyElementsForMobile(page);
   await ensureScrollTop(page);
 
   const pageTitle = await page.title();
@@ -199,6 +200,34 @@ async function ensureScrollTop(page) {
     const root = document.scrollingElement || document.documentElement;
     root.scrollTop = 0;
     window.scrollTo(0, 0);
+  });
+}
+
+async function hideStickyElementsForMobile(page) {
+  const viewport = page.viewportSize();
+  if (!viewport || viewport.width >= 600) return;
+
+  await page.evaluate(() => {
+    const viewportHeight = window.innerHeight || 0;
+    const viewportWidth = window.innerWidth || 0;
+    const candidates = Array.from(document.querySelectorAll('body *'));
+
+    candidates.forEach((el) => {
+      const style = window.getComputedStyle(el);
+      if (!['fixed', 'sticky'].includes(style.position)) return;
+      const rect = el.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      const viewportArea = viewportWidth * viewportHeight;
+      const isFullWidth = rect.width >= viewportWidth * 0.85;
+      const isBottom = rect.bottom >= viewportHeight - 4;
+      const isTop = rect.top <= 4;
+      const isLarge = viewportArea > 0 ? area / viewportArea > 0.05 : false;
+
+      if ((isBottom || isTop) && isFullWidth && isLarge) {
+        el.style.setProperty('display', 'none', 'important');
+        el.setAttribute('data-capture-hidden', 'true');
+      }
+    });
   });
 }
 
