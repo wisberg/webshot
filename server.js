@@ -84,8 +84,10 @@ async function createPdf(page, url, viewport) {
 
   await dismissCookieBanners(page);
   await page.waitForTimeout(300);
-  await autoScroll(page);
+  await scrollPageForLazyLoad(page);
   await page.waitForTimeout(200);
+  await normalizeForFullPageCapture(page);
+  await ensureScrollTop(page);
 
   const pageTitle = await page.title();
   const measured = await getDocumentSize(page);
@@ -97,7 +99,7 @@ async function createPdf(page, url, viewport) {
   const finalSize = await getDocumentSize(page);
   const targetHeight = Math.max(finalSize.height, viewport.height, 640);
 
-  const png = await page.screenshot({ fullPage: true, type: 'png' });
+  const png = await page.screenshot({ fullPage: true, type: 'png', captureBeyondViewport: true });
   const pdf = await renderImagePdf(page, png, targetWidth, targetHeight);
 
   return {
@@ -106,24 +108,96 @@ async function createPdf(page, url, viewport) {
   };
 }
 
-async function autoScroll(page) {
+async function scrollPageForLazyLoad(page) {
   await page.evaluate(async () => {
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-    const maxTries = 40;
+    const viewportHeight = window.innerHeight;
+    const root = document.scrollingElement || document.documentElement;
+
+    const candidates = Array.from(document.querySelectorAll('body *')).filter((el) => {
+      const style = window.getComputedStyle(el);
+      const overflowY = style.overflowY;
+      if (!['auto', 'scroll'].includes(overflowY)) return false;
+      if (el.scrollHeight <= el.clientHeight + 100) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.height >= viewportHeight * 0.6 && rect.width >= window.innerWidth * 0.6;
+    });
+
+    candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
+    const main = candidates[0] || root;
+
+    const getScrollHeight = (el) => {
+      if (el === root) {
+        return Math.max(
+          document.body.scrollHeight,
+          document.documentElement.scrollHeight,
+          document.body.offsetHeight,
+          document.documentElement.offsetHeight
+        );
+      }
+      return el.scrollHeight;
+    };
+
+    const scrollTo = (pos) => {
+      if (main === root) {
+        window.scrollTo(0, pos);
+      } else {
+        main.scrollTop = pos;
+      }
+    };
+
+    const maxTries = 50;
     let lastHeight = 0;
 
     for (let i = 0; i < maxTries; i += 1) {
-      window.scrollTo(0, document.body.scrollHeight);
-      await delay(250);
-      const height = Math.max(
-        document.body.scrollHeight,
-        document.documentElement.scrollHeight,
-        document.body.offsetHeight,
-        document.documentElement.offsetHeight
-      );
+      scrollTo(getScrollHeight(main));
+      await delay(300);
+      const height = getScrollHeight(main);
       if (height === lastHeight) break;
       lastHeight = height;
     }
+
+    scrollTo(0);
+    if (main !== root) {
+      window.scrollTo(0, 0);
+    }
+  });
+}
+
+async function normalizeForFullPageCapture(page) {
+  await page.evaluate(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const viewportHeight = window.innerHeight;
+
+    html.style.height = 'auto';
+    html.style.overflow = 'visible';
+    body.style.height = 'auto';
+    body.style.overflow = 'visible';
+
+    const candidates = Array.from(document.querySelectorAll('body *')).filter((el) => {
+      const style = window.getComputedStyle(el);
+      const overflowY = style.overflowY;
+      if (!['auto', 'scroll'].includes(overflowY)) return false;
+      if (el.scrollHeight <= el.clientHeight + 100) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.height >= viewportHeight * 0.6 && rect.width >= window.innerWidth * 0.6;
+    });
+
+    candidates.sort((a, b) => b.scrollHeight - a.scrollHeight);
+    const main = candidates[0];
+    if (main) {
+      main.style.overflow = 'visible';
+      main.style.height = 'auto';
+      main.style.maxHeight = 'none';
+    }
+  });
+}
+
+async function ensureScrollTop(page) {
+  await page.evaluate(() => {
+    const root = document.scrollingElement || document.documentElement;
+    root.scrollTop = 0;
     window.scrollTo(0, 0);
   });
 }
