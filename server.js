@@ -232,6 +232,21 @@ async function hideStickyElementsForMobile(page) {
     const viewportHeight = window.innerHeight || 0;
     const viewportWidth = window.innerWidth || 0;
     const candidates = Array.from(document.querySelectorAll("body *"));
+    let topHeaderCandidate = null;
+    let topHeaderArea = 0;
+
+    candidates.forEach((el) => {
+      const style = window.getComputedStyle(el);
+      if (!["fixed", "sticky"].includes(style.position)) return;
+      const rect = el.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      const isFullWidth = rect.width >= viewportWidth * 0.85;
+      const isTop = rect.top <= 4;
+      if (isTop && isFullWidth && area > topHeaderArea) {
+        topHeaderArea = area;
+        topHeaderCandidate = el;
+      }
+    });
 
     candidates.forEach((el) => {
       const style = window.getComputedStyle(el);
@@ -242,8 +257,16 @@ async function hideStickyElementsForMobile(page) {
       const isFullWidth = rect.width >= viewportWidth * 0.85;
       const isBottom = rect.bottom >= viewportHeight - 4;
       const isLarge = viewportArea > 0 ? area / viewportArea > 0.05 : false;
+      const isTop = rect.top <= 4;
+      const isOverlayish = Number(style.zIndex || 0) > 1000 || style.position === "fixed";
 
-      if (isBottom && isFullWidth && isLarge) {
+      if (el === topHeaderCandidate) return;
+
+      if (
+        (isBottom && isFullWidth && isLarge) ||
+        (!isTop && isFullWidth && isLarge) ||
+        (isOverlayish && isLarge)
+      ) {
         el.style.setProperty("display", "none", "important");
         el.setAttribute("data-capture-hidden", "true");
       }
